@@ -3,7 +3,7 @@ Invoice data extractor using OpenAI Vision and text models.
 """
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from openai_client import OpenAIClient
 from utils import get_file_type, encode_image, read_text_file, read_pdf_file
 
@@ -15,7 +15,7 @@ class InvoiceExtractor:
         """Initialize invoice extractor with OpenAI client."""
         self.client = openai_client
     
-    def extract(self, file_path: Path) -> Dict[str, Any]:
+    def extract(self, file_path: Path) -> tuple[Dict[str, Any], Dict[str, Any]]:
         """
         Extract invoice data from a document file.
         
@@ -23,7 +23,7 @@ class InvoiceExtractor:
             file_path: Path to invoice file (PDF, image, or text)
             
         Returns:
-            Dictionary containing extracted invoice data
+            Tuple of (extracted_data, api_usage)
         """
         file_type = get_file_type(file_path)
         
@@ -36,7 +36,7 @@ class InvoiceExtractor:
         else:
             raise ValueError(f"Unsupported file type: {file_type}")
     
-    def _extract_from_image(self, image_path: Path) -> Dict[str, Any]:
+    def _extract_from_image(self, image_path: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Extract data from image invoice using Vision API."""
         prompt = """Analyze this invoice image and extract all relevant invoice data.
 
@@ -91,9 +91,12 @@ Be thorough and extract all visible information. Use null for missing fields."""
             max_tokens=4096,
         )
         
-        return self.client.parse_json_response(response)
+        extracted_data = self.client.parse_json_response(response)
+        api_usage = response.get("usage", {})
+        
+        return extracted_data, api_usage
     
-    def _extract_from_pdf(self, pdf_path: Path) -> Dict[str, Any]:
+    def _extract_from_pdf(self, pdf_path: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Extract data from PDF invoice."""
         # First, try to extract text from PDF
         try:
@@ -111,7 +114,7 @@ Be thorough and extract all visible information. Use null for missing fields."""
             print("   📸 PDF appears to be image-based, using Vision API...")
             return self._extract_from_pdf_images(pdf_path)
     
-    def _extract_from_pdf_images(self, pdf_path: Path) -> Dict[str, Any]:
+    def _extract_from_pdf_images(self, pdf_path: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Extract data from image-based PDF by converting to images."""
         try:
             import fitz  # PyMuPDF
@@ -200,7 +203,10 @@ Be thorough and extract all visible information. Use null for missing fields."""
                     max_tokens=4096,
                 )
                 
-                return self.client.parse_json_response(response)
+                extracted_data = self.client.parse_json_response(response)
+                api_usage = response.get("usage", {})
+                
+                return extracted_data, api_usage
             finally:
                 # Clean up temporary image file
                 if temp_image_path.exists():
@@ -214,7 +220,7 @@ Be thorough and extract all visible information. Use null for missing fields."""
         except Exception as e:
             raise ValueError(f"Failed to process PDF as image: {str(e)}")
     
-    def _extract_from_text(self, text_path: Path) -> Dict[str, Any]:
+    def _extract_from_text(self, text_path: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Extract data from text invoice file."""
         text_content = read_text_file(text_path)
         
@@ -223,7 +229,7 @@ Be thorough and extract all visible information. Use null for missing fields."""
         
         return self._extract_from_text_content(text_content)
     
-    def _extract_from_text_content(self, text_content: str) -> Dict[str, Any]:
+    def _extract_from_text_content(self, text_content: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Extract structured data from text content using GPT."""
         system_prompt = """You are an expert invoice data extractor. Your task is to analyze invoice text and extract all relevant structured data.
 
@@ -280,4 +286,7 @@ Extract all available information. Use null for missing fields."""
             temperature=0.0,
         )
         
-        return self.client.parse_json_response(response)
+        extracted_data = self.client.parse_json_response(response)
+        api_usage = response.get("usage", {})
+        
+        return extracted_data, api_usage

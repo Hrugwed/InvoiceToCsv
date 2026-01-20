@@ -19,6 +19,7 @@ from invoice_extractor import InvoiceExtractor
 from mapper import SemanticMapper
 from confidence import ConfidenceAnalyzer
 from csv_writer import CSVWriter
+from json_saver import JSONSaver
 from utils import find_invoice_files, validate_csv_template
 
 
@@ -121,14 +122,33 @@ def main(template_path: Optional[str] = None, invoice_dir: Optional[str] = None,
         mapper = SemanticMapper(openai_client)
         confidence_analyzer = ConfidenceAnalyzer()
         csv_writer = CSVWriter()
+        json_saver = JSONSaver()
         print("✅ Components initialized")
         print()
         
+        # Track total API usage
+        total_api_usage = {
+            "total_prompt_tokens": 0,
+            "total_completion_tokens": 0,
+            "total_tokens": 0,
+            "total_calls": 0
+        }
+        
         # Parse CSV template
         print("📋 Parsing CSV template...")
-        template_info = schema_parser.parse_template(csv_template_path)
+        template_info, schema_usage = schema_parser.parse_template(csv_template_path)
         headers = template_info["headers"]
         schema = template_info["schema"]
+        
+        # Save schema JSON
+        schema_json_path = json_saver.save_schema(template_info, schema_usage)
+        
+        # Update total usage
+        total_api_usage["total_prompt_tokens"] += schema_usage.get("prompt_tokens", 0)
+        total_api_usage["total_completion_tokens"] += schema_usage.get("completion_tokens", 0)
+        total_api_usage["total_tokens"] += schema_usage.get("total_tokens", 0)
+        total_api_usage["total_calls"] += 1
+        
         print(f"✅ Template parsed: {len(headers)} columns")
         print(f"   Columns: {', '.join(headers)}")
         print()
@@ -142,6 +162,7 @@ def main(template_path: Optional[str] = None, invoice_dir: Optional[str] = None,
         all_rows = []
         all_confidence_scores = []
         all_analyses = []
+        processed_invoices = []
         
         for i, invoice_file in enumerate(invoice_files, 1):
             print(f"[{i}/{len(invoice_files)}] Processing: {invoice_file.name}")
@@ -149,14 +170,43 @@ def main(template_path: Optional[str] = None, invoice_dir: Optional[str] = None,
             try:
                 # Extract invoice data
                 print("   📄 Extracting invoice data...")
-                invoice_data = invoice_extractor.extract(invoice_file)
+                invoice_data, extraction_usage = invoice_extractor.extract(invoice_file)
+                
+                # Save extraction JSON
+                extraction_json_path = json_saver.save_extraction(
+                    invoice_file.name,
+                    invoice_data,
+                    extraction_usage
+                )
+                
+                # Update total usage
+                total_api_usage["total_prompt_tokens"] += extraction_usage.get("prompt_tokens", 0)
+                total_api_usage["total_completion_tokens"] += extraction_usage.get("completion_tokens", 0)
+                total_api_usage["total_tokens"] += extraction_usage.get("total_tokens", 0)
+                total_api_usage["total_calls"] += 1
+                
                 print("   ✅ Extraction complete")
                 
                 # Map to schema
                 print("   🔗 Mapping to CSV schema...")
-                mapped_data, confidence_scores = mapper.map_invoice_to_schema(
+                mapped_data, confidence_scores, mapping_usage = mapper.map_invoice_to_schema(
                     invoice_data, schema
                 )
+                
+                # Save mapping JSON
+                mapping_json_path = json_saver.save_mapping(
+                    invoice_file.name,
+                    mapped_data,
+                    confidence_scores,
+                    mapping_usage
+                )
+                
+                # Update total usage
+                total_api_usage["total_prompt_tokens"] += mapping_usage.get("prompt_tokens", 0)
+                total_api_usage["total_completion_tokens"] += mapping_usage.get("completion_tokens", 0)
+                total_api_usage["total_tokens"] += mapping_usage.get("total_tokens", 0)
+                total_api_usage["total_calls"] += 1
+                
                 print("   ✅ Mapping complete")
                 
                 # Analyze confidence
@@ -166,6 +216,7 @@ def main(template_path: Optional[str] = None, invoice_dir: Optional[str] = None,
                 # Store results
                 all_rows.append(mapped_data)
                 all_confidence_scores.append(confidence_scores)
+                processed_invoices.append(invoice_file.name)
                 
                 # Show warnings
                 warnings = confidence_analyzer.format_warnings(analysis, invoice_file.name)
@@ -192,11 +243,36 @@ def main(template_path: Optional[str] = None, invoice_dir: Optional[str] = None,
         print(f"✅ Output written: {output_path}")
         print()
         
+        # Save summary JSON
+        summary_json_path = json_saver.save_summary(
+            processed_invoices,
+            total_api_usage,
+            all_analyses
+        )
+        
         # Show summary
         summary = confidence_analyzer.get_summary(all_analyses)
         if summary:
             print(summary)
             print()
+        
+        # Show API usage summary
+        print("=" * 60)
+        print("API USAGE SUMMARY")
+        print("=" * 60)
+        print(f"Total API calls: {total_api_usage['total_calls']}")
+        print(f"Total tokens: {total_api_usage['total_tokens']:,}")
+        print(f"  - Prompt tokens: {total_api_usage['total_prompt_tokens']:,}")
+        print(f"  - Completion tokens: {total_api_usage['total_completion_tokens']:,}")
+        
+        # Estimate costs
+        prompt_cost_mini = total_api_usage['total_prompt_tokens'] / 1_000_000 * 0.15
+        completion_cost_mini = total_api_usage['total_completion_tokens'] / 1_000_000 * 0.60
+        total_cost_mini = prompt_cost_mini + completion_cost_mini
+        
+        print(f"\n💰 Estimated cost (GPT-4o-mini): ${total_cost_mini:.6f}")
+        print(f"   💡 Check summary JSON for detailed cost breakdown")
+        print()
         
         # Show low confidence warnings
         has_warnings = any(
@@ -212,7 +288,12 @@ def main(template_path: Optional[str] = None, invoice_dir: Optional[str] = None,
         print("=" * 60)
         print("✅ PROCESSING COMPLETE")
         print("=" * 60)
-        print(f"📁 Output file: {output_path}")
+        print(f"📁 CSV output: {output_path}")
+        print(f"📊 JSON data saved to: {json_saver.output_dir}")
+        print(f"   - Schema: {schema_json_path.name}")
+        print(f"   - Extractions: {len(processed_invoices)} files")
+        print(f"   - Mappings: {len(processed_invoices)} files")
+        print(f"   - Summary: {summary_json_path.name}")
         print()
         
     except KeyboardInterrupt:

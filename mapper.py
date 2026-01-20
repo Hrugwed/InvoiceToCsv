@@ -14,7 +14,7 @@ class SemanticMapper:
     
     def map_invoice_to_schema(
         self, invoice_data: Dict[str, Any], schema: List[Dict[str, Any]]
-    ) -> Tuple[Dict[str, Any], Dict[str, float]]:
+    ) -> Tuple[Dict[str, Any], Dict[str, float], Dict[str, Any]]:
         """
         Map extracted invoice data to CSV schema columns.
         
@@ -23,7 +23,7 @@ class SemanticMapper:
             schema: CSV schema with semantic information
             
         Returns:
-            Tuple of (mapped_data, confidence_scores)
+            Tuple of (mapped_data, confidence_scores, api_usage)
         """
         system_prompt = """You are a data mapping expert. Your task is to map extracted invoice data to CSV column headers based on semantic meaning, not exact string matching.
 
@@ -85,6 +85,7 @@ Perform semantic mapping and return the mapped data with confidence scores."""
         )
         
         result = self.client.parse_json_response(response)
+        api_usage = response.get("usage", {})
         
         # Validate response structure
         if "mapped_data" not in result:
@@ -114,7 +115,7 @@ Perform semantic mapping and return the mapped data with confidence scores."""
             except (ValueError, TypeError):
                 normalized_scores[header] = 0.0
         
-        return mapped_data, normalized_scores
+        return mapped_data, normalized_scores, api_usage
     
     def _format_schema_description(self, schema: List[Dict[str, Any]]) -> str:
         """Format schema for prompt."""

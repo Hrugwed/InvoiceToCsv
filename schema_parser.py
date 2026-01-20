@@ -3,7 +3,7 @@ CSV schema parser that uses OpenAI to understand semantic meaning of columns.
 """
 import pandas as pd
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 from openai_client import OpenAIClient
 from utils import validate_csv_template
 
@@ -15,7 +15,7 @@ class SchemaParser:
         """Initialize schema parser with OpenAI client."""
         self.client = openai_client
     
-    def parse_template(self, csv_path: Path) -> Dict[str, Any]:
+    def parse_template(self, csv_path: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
         Parse CSV template and return semantic schema.
         
@@ -23,7 +23,7 @@ class SchemaParser:
             csv_path: Path to CSV template file
             
         Returns:
-            Dictionary containing schema information
+            Tuple of (schema_info, api_usage)
         """
         validate_csv_template(csv_path)
         
@@ -38,15 +38,17 @@ class SchemaParser:
             raise ValueError("CSV template has no headers")
         
         # Generate schema using OpenAI
-        schema = self._infer_schema(headers)
+        schema, api_usage = self._infer_schema(headers)
         
-        return {
+        schema_info = {
             "headers": headers,
             "schema": schema,
             "column_count": len(headers),
         }
+        
+        return schema_info, api_usage
     
-    def _infer_schema(self, headers: List[str]) -> List[Dict[str, Any]]:
+    def _infer_schema(self, headers: List[str]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         Use OpenAI to infer semantic meaning and data types for each column.
         
@@ -54,7 +56,7 @@ class SchemaParser:
             headers: List of CSV column headers
             
         Returns:
-            List of schema dictionaries for each column
+            Tuple of (schema, api_usage)
         """
         system_prompt = """You are a data schema expert. Your task is to analyze CSV column headers and infer their semantic meaning, data type, and expected format.
 
@@ -95,6 +97,7 @@ Return the JSON schema analysis as specified."""
         )
         
         result = self.client.parse_json_response(response)
+        api_usage = response.get("usage", {})
         
         # Validate and normalize schema
         if "columns" not in result:
@@ -110,4 +113,4 @@ Return the JSON schema analysis as specified."""
             missing = header_set - schema_headers
             raise ValueError(f"Schema missing headers: {missing}")
         
-        return schema
+        return schema, api_usage
